@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/aquasecurity/table"
 )
 
 type Config struct {
@@ -17,10 +19,16 @@ type Config struct {
 	concurrentRequests int
 }
 
-type Response struct {
+type HTTPResponse struct {
 	Time          time.Duration
 	StatusCode    int
 	UnableToReach bool
+}
+
+type Response struct {
+	TotalHits int
+	Success   int
+	Failed    int
 }
 
 func main() {
@@ -43,6 +51,7 @@ func main() {
 	var wg sync.WaitGroup
 
 	semaphore := make(chan struct{}, config.concurrentRequests)
+	resp := &Response{}
 
 	for i := 0; i < config.totalRequests; i++ {
 		wg.Add(1)
@@ -55,14 +64,33 @@ func main() {
 				<-semaphore
 			}()
 
-			resp := makeHTTPRequest(req)
-			fmt.Printf("Status: %d, Time: %v, Error: %v\n", resp.StatusCode, resp.Time, resp.UnableToReach)
+			httpResp := makeHTTPRequest(req)
+
+			if httpResp.UnableToReach {
+				return
+			}
+
+			if httpResp.StatusCode == http.StatusOK {
+				resp.Success++
+			} else {
+				resp.Failed++
+			}
+
+			resp.TotalHits++
 		}()
 	}
 
 	wg.Wait()
 
 	close(semaphore)
+
+	t := table.New(os.Stdout)
+	t.SetHeaders("Stat", "Count")
+	t.AddRow("Total Hits", strconv.Itoa(resp.TotalHits))
+	t.AddRow("Success", strconv.Itoa(resp.Success))
+	t.AddRow("Failed", strconv.Itoa(resp.Failed))
+
+	t.Render()
 }
 
 func parseArgs(args []string) (*Config, error) {
@@ -97,8 +125,8 @@ func buildRequest(config *Config) *http.Request {
 	return req
 }
 
-func makeHTTPRequest(req *http.Request) *Response {
-	resp := &Response{}
+func makeHTTPRequest(req *http.Request) *HTTPResponse {
+	resp := &HTTPResponse{}
 
 	now := time.Now()
 
