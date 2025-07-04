@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -34,14 +35,34 @@ func main() {
 	}
 
 	req := buildRequest(config)
-
-	if req != nil {
-		for i := range config.totalRequests {
-			resp := makeHTTPRequest(req)
-			fmt.Println(resp)
-			i++
-		}
+	if req == nil {
+		fmt.Println("Unable to build HTTP request")
+		os.Exit(1)
 	}
+
+	var wg sync.WaitGroup
+
+	semaphore := make(chan struct{}, config.concurrentRequests)
+
+	for i := 0; i < config.totalRequests; i++ {
+		wg.Add(1)
+
+		semaphore <- struct{}{}
+
+		go func() {
+			defer wg.Done()
+			defer func() {
+				<-semaphore
+			}()
+
+			resp := makeHTTPRequest(req)
+			fmt.Printf("Status: %d, Time: %v, Error: %v\n", resp.StatusCode, resp.Time, resp.UnableToReach)
+		}()
+	}
+
+	wg.Wait()
+
+	close(semaphore)
 }
 
 func parseArgs(args []string) (*Config, error) {
